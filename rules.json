@@ -1,11 +1,11 @@
 {
-  "_info": "Briqwise dossier-check rules. Edit, commit to main, then purge the jsDelivr cache. Everything here is public.",
-  "version": "2026-10-19",
+  "_info": "Briqwise financieringscheck (debtor version of the dossier-check) rules. Edit, commit to main, then purge the jsDelivr cache. Everything here is public.",
+  "version": "2026-11-17",
   "hubspot": {
     "portalId": "25717347",
     "forms": {
-      "report": "7b005adc-6bbc-4b51-a285-73736a6bf72a",
-      "caseSubmit": "71fcbb57-bfae-45ea-9fb7-fcfb7ae8ba4a"
+      "report": "REPLACE-financieringscheck-rapport",
+      "caseSubmit": "REPLACE-financieringscheck-aanvraag"
     },
     "loanDurationUnit": "months"
   },
@@ -16,7 +16,7 @@
     "phone": "085 130 37 86"
   },
   "email": {
-    "blockFreeMail": true,
+    "blockFreeMail": false,
     "mxCheck": true,
     "extraBlockedDomains": []
   },
@@ -71,13 +71,5 @@
         "pct": 1.5
       }
     ]
-  },
-  "intermediaryFee": {
-    "enabled": true,
-    "validUntil": null,
-    "pctPerCriterion": 0.5,
-    "maxLoanAmount": 200000,
-    "maxLtv": 0.5,
-    "maxTermMonths": 24
   }
 }

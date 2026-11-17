@@ -1,4 +1,5 @@
-// Creates the HubSpot properties and the two forms the dossier-check submits to.
+// Creates the two forms the financieringscheck (debtor version of the dossier-check) submits to.
+// The contact properties are shared with the broker dossier-check (group "Dossier-check"): existing ones are reused, missing ones created.
 // Usage:  HUBSPOT_TOKEN=pat-eu1-... node scripts/hubspot-setup.mjs [--dry] [--props-only]
 // Private app scopes: crm.schemas.contacts.read, crm.schemas.contacts.write, crm.schemas.custom.read, forms
 // Safe to re-run: existing properties are left alone; forms are only created when no form with the same name exists.
@@ -11,7 +12,7 @@ if (!TOKEN) { console.error('Set HUBSPOT_TOKEN (private app token).'); process.e
 
 const GROUP = { name: 'dossier_check', label: 'Dossier-check' };
 const LOAN = '2-138893726', COLLATERAL = '2-139157927';
-const FORM_NAMES = { report: 'Dossier-check | Rapport', caseSubmit: 'Dossier-check | Case indienen' };
+const FORM_NAMES = { report: 'Financieringscheck | Rapport', caseSubmit: 'Financieringscheck | Aanvraag indienen' };
 
 const opt = (pairs) => pairs.map(([value, label], i) => ({ value, label, displayOrder: i }));
 const DOCS = opt([['taxatie', 'Taxatierapport'], ['foto', 'Foto onderpand'], ['koopcontract', 'Koopcontract'], ['huurcontracten', 'Huurcontracten'], ['kvk', 'KvK-uittreksel'], ['jaarcijfers', 'Jaarcijfers'], ['ib', 'IB-aangifte UBO'], ['bkr', 'BKR-uittreksel'], ['portefeuille', 'Overzicht vastgoedportefeuille'], ['begroting', 'Begroting of offerte'], ['omgevingsvergunning', 'Omgevingsvergunning'], ['erfpachtcontract', 'Erfpachtcontract'], ['exploitatieovereenkomst', 'Exploitatieovereenkomst']]);
@@ -23,7 +24,6 @@ const area = (name, label) => ({ name, label, type: 'string', fieldType: 'textar
 const bool = (name, label) => ({ name, label, type: 'enumeration', fieldType: 'booleancheckbox', options: opt([['true', 'Ja'], ['false', 'Nee']]) });
 
 const PROPS = [
-  sel('intermediair_type', 'Type intermediair', opt([['financieringsadviseur', 'Financieringsadviseur'], ['accountant_administratie', 'Accountant of administratiekantoor'], ['makelaar', 'Makelaar'], ['assurantiekantoor', 'Assurantiekantoor'], ['bank_geldverstrekker', 'Bank of geldverstrekker'], ['anders', 'Anders']])),
   sel('dc_outcome', 'Dossier-check uitkomst', opt([['term_sheet', 'Kansrijk: term sheet'], ['dossier_aanvullen', 'Kansrijk: dossier aanvullen'], ['maatwerk', 'Maatwerk']])),
   num('dc_loan_amount', 'Leensom', true), num('dc_property_value', 'Waarde onderpand', true),
   sel('dc_term_months', 'Looptijd (maanden)', opt([3, 6, 12, 24, 36, 48, 60, 120, 240].map(m => [String(m), m < 12 ? `${m} maanden` : `${m} maanden (${m / 12} jaar)`]))), num('dc_ltv', 'LTV (%)'),
@@ -41,28 +41,26 @@ const PROPS = [
   num('dc_guarantee_amount', 'Borgstelling', true), num('dc_financing_fee', 'Financieringsfee', true),
   num('dc_rate_surcharge', 'Renteopslag looptijd (%)'),
   num('dc_monthly_low', 'Maandlast indicatie laag', true), num('dc_monthly_high', 'Maandlast indicatie hoog', true),
-  num('dc_intermediary_fee_pct', 'Intermediairsvergoeding (%)'), num('dc_intermediary_fee_amount', 'Intermediairsvergoeding', true),
   area('dc_report_summary', 'Rapport samenvatting'),
   bool('dc_case_submitted', 'Case ingediend'),
-  area('dc_notes', 'Toelichting intermediair'),
-  bool('dc_client_consent', 'Klant akkoord met delen'),
+  area('dc_notes', 'Toelichting'),
   { name: 'dc_last_check_at', label: 'Laatste dossier-check', type: 'date', fieldType: 'date' }
 ];
 const NEW_TYPE_OPTION = { value: 'Agrarisch / grond', label: 'Agrarisch / grond' };
 
 /* Fields per form, exactly what the script on the website sends. */
-const DC_FIELDS = PROPS.filter(p => !['dc_last_check_at', 'dc_case_submitted', 'dc_notes', 'dc_client_consent'].includes(p.name)).map(p => p.name);
+const DC_FIELDS = PROPS.filter(p => !['dc_last_check_at', 'dc_case_submitted', 'dc_notes'].includes(p.name)).map(p => p.name);
 const TRACKING = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'utm_id', 'gclid', 'gbraid', 'wbraid', 'fbclid', 'li_fat_id', 'previous_page_before_conversion'];
 const COMMON = ['contact_type', 'bw_business_unit', 'doel_financiering', 'type_bestemming', ...DC_FIELDS, ...TRACKING];
 const FORMS = {
   report: {
-    visible: ['firstname', 'lastname', 'email', 'phone', 'company', 'zip', 'intermediair_type', 'marketing_consent'],
-    required: ['firstname', 'lastname', 'email', 'company', 'zip', 'intermediair_type'],
-    hidden: COMMON.filter(n => n !== 'intermediair_type'), objects: [['0-2', ['name', 'zip']]]
+    visible: ['firstname', 'lastname', 'email', 'phone', 'company', 'marketing_consent'],
+    required: ['firstname', 'lastname', 'email'],
+    hidden: COMMON, objects: [['0-2', ['name']]]
   },
   caseSubmit: {
-    visible: ['email', 'phone', 'dc_notes', 'dc_client_consent'],
-    required: ['email', 'phone', 'dc_client_consent'],
+    visible: ['email', 'phone', 'dc_notes'],
+    required: ['email', 'phone'],
     hidden: ['dc_case_submitted', 'appraisal_value', 'desired_loan_amount', 'ltv', 'straatnaam_vastgoed', 'huisnummer_vastgoed', 'huisnummer_toevoeging_los', 'postcode_vastgoed', 'plaatsnaam_vastgoed', ...COMMON],
     objects: [[LOAN, ['loan_amount', 'loan_duration_imp', 'loan_status', 'bi_loans_id', 'loan_country']], [COLLATERAL, ['collateral_address_full', 'collateral_street', 'collateral_house_number', 'collateral_house_number_addition', 'collateral_postal_code', 'collateral_city', 'collateral_country_code', 'collateral_appraisal_value', 'collateral_financing_type', 'collateral_usage']]]
   }
@@ -104,7 +102,8 @@ async function ensureProps() {
 function toField(objectTypeId, p, hidden, required) {
   const base = { objectTypeId, name: p.name, label: p.label, hidden, required, dependentFields: [] };
   const opts = (p.options || []).filter(o => !o.hidden).map((o, i) => ({ value: o.value, label: o.label, displayOrder: i }));
-  if (p.name === 'email') return { ...base, fieldType: 'email', validation: { useDefaultBlockList: true, blockedEmailDomains: [] } };
+  /* no free-mail block list: entrepreneurs often use Gmail/Hotmail; the script itself blocks disposable and junk addresses */
+  if (p.name === 'email') return { ...base, fieldType: 'email', validation: { useDefaultBlockList: false, blockedEmailDomains: [] } };
   if (p.fieldType === 'phonenumber') return { ...base, fieldType: 'phone', useCountryCodeSelect: false, validation: { minAllowedDigits: 7, maxAllowedDigits: 20 } };
   if (p.type === 'number') return { ...base, fieldType: 'number' };
   if (p.fieldType === 'booleancheckbox') return { ...base, fieldType: 'single_checkbox' };

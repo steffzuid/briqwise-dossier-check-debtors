@@ -1,4 +1,4 @@
-/*! Briqwise dossier-check | logic, business-email validation and HubSpot Forms API connector | rules: rules.json */
+/*! Briqwise financieringscheck | debtor version of the dossier-check: logic, e-mail validation and HubSpot Forms API connector | rules: rules.json */
 (function () {
   'use strict';
 
@@ -59,13 +59,11 @@
       borgLowLtv: RU.guarantee.lowLtv, borgLowPct: RU.guarantee.lowLtvPct,
       rateMin: RU.rate.min, rateMax: RU.rate.max, surcharges: (RU.rate.termSurcharges || []).slice().sort(function (a, b) { return b.fromMonths - a.fromMonths; })
     },
-    fee: RU.intermediaryFee
   };
 
   var root = document.querySelector('[data-dc-root]');
   if (!root) return;
   var R = CONFIG.rules;
-  var FEE_ON = !!(CONFIG.fee && CONFIG.fee.enabled) && (!CONFIG.fee.validUntil || new Date() <= new Date(CONFIG.fee.validUntil + 'T23:59:59'));
 
   /* ================= helpers ================= */
   function $(k) { return root.querySelector('[data-dc="' + k + '"]'); }
@@ -75,7 +73,7 @@
   function pctL(f) { return (Math.round(f * 1000) / 10).toString().replace('.', ',') + '%'; }
   function lt(m) { return m < 12 ? m + ' maanden' : (m % 12 ? (m / 12).toFixed(1).replace('.', ',') : m / 12) + ' jaar'; }
   function track(action, extra) {
-    try { window.dataLayer = window.dataLayer || []; var e = { event: 'dossier_check', dc_action: action }; for (var k in (extra || {})) e[k] = extra[k]; window.dataLayer.push(e); } catch (x) {}
+    try { window.dataLayer = window.dataLayer || []; var e = { event: 'financieringscheck', dc_action: action }; for (var k in (extra || {})) e[k] = extra[k]; window.dataLayer.push(e); } catch (x) {}
   }
   function ss(k, v) { try { if (v === undefined) return sessionStorage.getItem(k); sessionStorage.setItem(k, v); } catch (x) { return null; } }
 
@@ -115,7 +113,7 @@
   $$('[data-i]').forEach(function (b) { b.insertAdjacentHTML('afterbegin', svg(b.getAttribute('data-i'))); });
 
   /* ================= state ================= */
-  var S = { doel: 'aankoop', type: 'bedrijfsruimte', gebruik: 'verhuur', aanvrager: 'bv', box3: '', excl: 'nee', eig: 'vol', bank: 'nee', tint: '' };
+  var S = { doel: 'aankoop', type: 'bedrijfsruimte', gebruik: 'verhuur', aanvrager: 'bv', box3: '', excl: 'nee', eig: 'vol', bank: 'nee' };
   var done = { kvk: true, ib: true };
   var bz = {};
   var startedAt = Date.now();
@@ -135,6 +133,22 @@
   var USAGE = { woning: 'residential', combi: 'mixed', bedrijfsruimte: 'commercial', winkel: 'commercial', recreatie: 'commercial', grond: 'commercial' };
   var HS_TYPE = { bedrijfsruimte: 'Bedrijfsruimte', combi: 'Bedrijfsruimte + woning/appartement', woning: 'Woning / appartement', winkel: 'Winkel', recreatie: 'Recreatie', grond: 'Agrarisch / grond' };
 
+  /* ================= prefill from the URL (e-mail links, e.g. the reactivation flow) =================
+     ?waarde=800000&bedrag=500000&looptijd=120&doel=herfin&type=winkel
+     looptijd in months (snaps to the nearest term option); doel/type use the keys of LBL. */
+  var PRE = (function () {
+    var o = {};
+    try {
+      var q = new URLSearchParams(location.search), n = function (k) { var v = parseInt(String(q.get(k) || '').replace(/[^0-9]/g, ''), 10); return v > 0 ? v : 0; };
+      if (n('waarde')) o.waarde = n('waarde');
+      if (n('bedrag')) o.bedrag = n('bedrag');
+      if (n('looptijd')) o.looptijd = n('looptijd');
+      if (LBL.doel[q.get('doel')]) o.doel = S.doel = q.get('doel');
+      if (LBL.type[q.get('type')]) o.type = S.type = q.get('type');
+    } catch (x) {}
+    return o;
+  })();
+
   /* ================= option groups ================= */
   $$('[data-g]').forEach(function (g) {
     var k = g.getAttribute('data-g');
@@ -143,7 +157,6 @@
     btns.forEach(function (b) {
       b.addEventListener('click', function () {
         S[k] = b.getAttribute('data-v'); draw();
-        if (k === 'tint') { var h = root.querySelector('[data-dc-form="report"] [name="intermediair_type"]'); if (h) h.value = S.tint; setErr('report', ''); }
         if (k === 'aanvrager') $('box3w').hidden = S.aanvrager !== 'prive';
         if (['doel', 'type', 'gebruik', 'aanvrager', 'eig'].indexOf(k) > -1) renderDocs();
         upd();
@@ -187,12 +200,6 @@
     return { vrij: vrij, rest: rest, perJaar: rest <= 0 ? 0 : kort ? rest / (m / 12) : rest / R.linearYears, kort: kort };
   }
   function opslag(m) { for (var i = 0; i < R.surcharges.length; i++) if (m >= R.surcharges[i].fromMonths) return R.surcharges[i].pct; return 0; }
-  function vergoeding(b, l, m, pct) {
-    var Fe = CONFIG.fee || {}, step = Fe.pctPerCriterion || 0;
-    var c = [['Compleet dossier', pct === 100], ['Leensom tot ' + eur(Fe.maxLoanAmount), b <= Fe.maxLoanAmount], ['LTV tot ' + pctL(Fe.maxLtv), l <= Fe.maxLtv], ['Looptijd tot ' + Fe.maxTermMonths + ' maanden', m <= Fe.maxTermMonths]];
-    var p = FEE_ON ? c.filter(function (x) { return x[1]; }).length * step : 0;
-    return { c: c, p: p, eur: b * p / 100 };
-  }
   function calc(wAdj) {
     var w = +$('waarde').value * (1 + (wAdj || 0) / 100), b = +$('bedrag').value, m = termAt($('looptijd').value), l = b / w;
     var dl = docList(), have = dl.filter(function (d) { return done[d[0]]; });
@@ -207,8 +214,7 @@
       have: have, miss: dl.filter(function (d) { return !done[d[0]]; }),
       borg: S.aanvrager === 'bv' ? (l <= R.borgLowLtv ? R.borgLowPct * b : b) : 0,
       fee: R.fee * Math.max(b, R.feeMinBase), mgmt: b * R.mgmt,
-      rLo: R.rateMin + ops, rHi: R.rateMax + ops,
-      v: vergoeding(b, l, m, pct)
+      rLo: R.rateMin + ops, rHi: R.rateMax + ops
     };
   }
   /* the slider moves over an index; the months come from rules.loan.termOptionsMonths */
@@ -242,9 +248,6 @@
     $('cVrij').textContent = eur(r.a.vrij);
     $('cAfl').textContent = r.a.perJaar ? eur(r.a.perJaar) + ' per jaar' : 'Geen';
     $('cRule').textContent = r.a.kort ? 'Looptijd tot ' + R.shortTerm + ' maanden: aflossingsvrij tot ' + pctL(R.ltvFreeShort) + ' LTV, het meerdere los je af binnen de looptijd.' : 'Tot ' + pctL(R.ltvFree) + ' LTV aflossingsvrij, het meerdere los je lineair af in ' + R.linearYears + ' jaar.';
-    $('cVerg').textContent = pc(r.v.p) + ' · ' + eur(r.v.eur);
-    var nxt = r.v.c.filter(function (x) { return !x[1]; }).map(function (x) { return x[0].toLowerCase(); });
-    $('cVergH').textContent = nxt.length ? 'Tot ' + pc(4 * ((CONFIG.fee || {}).pctPerCriterion || 0)) + ' mogelijk. Nog te behalen: ' + nxt.join(', ') + '.' : 'Maximale vergoeding behaald.';
     $('uOut').textContent = URG[+$('urg').value];
     return r;
   }
@@ -253,8 +256,8 @@
   /* ================= navigation ================= */
   var steps = $$('section[data-step]');
   var STEP_TXT = {
-    1: ['Heeft deze aanvraag kans?', 'Begin met het pand en het gevraagde bedrag.'],
-    2: ['Looptijd, aanvrager en stukken', 'Kies de looptijd en wie er aanvraagt, en tik aan welke stukken je al hebt.'],
+    1: ['Kun je financieren op je pand?', 'Begin met je pand en het bedrag dat je wilt lenen.'],
+    2: ['Looptijd, aanvrager en stukken', 'Kies de looptijd en op wiens naam je leent, en tik aan welke stukken je al hebt.'],
     3: ['Eigendom en bijzonderheden', 'Nog een paar vragen. Daarna zie je de uitkomst.'],
     4: ['De uitkomst van je check', 'Op basis van wat je hebt ingevuld.']
   };
@@ -296,20 +299,20 @@
   var KO_ON = { branche: function () { return S.excl === 'ja'; }, opstal: function () { return S.eig === 'opstal'; }, consument: function () { return S.aanvrager === 'prive' && S.gebruik === 'eigen'; } };
   var KO_SHORT = { branche: 'Uitgesloten sector', opstal: 'Recht van opstal', consument: 'Consumentenfinanciering' };
   var KO = {
-    branche: 'Briqwise financiert geen geldnemers of huurders die actief zijn in seks, wapens of drugs, en geen casino in eigen beheer. Ook niet als maatwerk. Is alleen de huurder een casino? Kies dan Nee en tik bij bijzonderheden \'Huurder is een casino\' aan.',
+    branche: 'Briqwise financiert geen ondernemers of huurders die actief zijn in seks, wapens of drugs, en geen casino in eigen beheer. Ook niet als maatwerk. Is alleen je huurder een casino? Kies dan Nee en tik bij bijzonderheden \'Huurder is een casino\' aan.',
     opstal: 'Een recht van opstal accepteren we niet als onderpand, ook niet als maatwerk. Erfpacht kan wel.',
-    consument: 'Privé lenen voor eigen gebruik is een consumentenfinanciering in de zin van de Wft. Die bieden we niet aan op ons platform. Verhuur vanuit box 3 kan wel.'
+    consument: 'Privé lenen voor een pand dat je zelf gebruikt is een consumentenfinanciering in de zin van de Wft. Die bieden we niet aan op ons platform. Lenen voor verhuur vanuit box 3 kan wel.'
   };
   function outcome(r) {
-    if (r.ko) return ['da', 'ban', 'Deze case kunnen we niet financieren', KO[r.ko]];
+    if (r.ko) return ['da', 'ban', 'Dit kunnen we helaas niet financieren', KO[r.ko]];
     var hr = r.l > R.ltvRateUp ? ' Een LTV boven ' + pctL(R.ltvRateUp) + ' betekent doorgaans een hogere rente.' : '';
-    var bk = S.bank === 'ja' ? ' Een afwijzing door de bank is voor ons geen belemmering.' : '';
+    var bk = S.bank === 'ja' ? ' Heeft je bank nee gezegd? Dat is voor ons geen belemmering.' : '';
     if (r.o === 'maatwerk') {
-      var why = !r.fit ? (r.l > R.ltvMax ? 'De LTV ligt boven de ' + pctL(R.ltvMax) + '.' : 'Het bedrag valt buiten ' + eur(R.min) + ' tot ' + eur(R.max) + '.') : 'Er zijn punten die je accountmanager eerst wil bespreken.';
-      return ['mw', 'msg', 'Maatwerk: bespreek met je accountmanager', why + ' We denken in wat wél kan: vaak is er een route om de case binnen de richtlijnen te krijgen.' + bk];
+      var why = !r.fit ? (r.l > R.ltvMax ? 'Je wilt meer lenen dan ' + pctL(R.ltvMax) + ' van de waarde van je pand.' : 'Het bedrag valt buiten ' + eur(R.min) + ' tot ' + eur(R.max) + '.') : 'Er zijn punten die een accountmanager eerst met je wil bespreken.';
+      return ['mw', 'msg', 'Maatwerk: bespreek het met een accountmanager', why + ' We denken in wat wél kan: vaak is er een route, bijvoorbeeld met een lager bedrag of meer eigen inbreng.' + bk];
     }
-    if (r.o === 'term_sheet') return ['ok', 'check', 'Kansrijk: klaar voor een term sheet', 'Binnen onze voorwaarden en je dossier is vrijwel compleet. Je ontvangt binnen één werkdag een term sheet.' + hr + bk];
-    return ['wa', 'file', 'Kansrijk: dossier aanvullen', 'Past binnen onze voorwaarden. Met een compleet dossier ontvang je binnen één werkdag een term sheet.' + hr + bk];
+    if (r.o === 'term_sheet') return ['ok', 'check', 'Kansrijk: klaar voor een voorstel', 'Je aanvraag past binnen onze voorwaarden en je stukken zijn vrijwel compleet. Na het indienen ontvang je binnen één werkdag een indicatief voorstel (term sheet).' + hr + bk];
+    return ['wa', 'file', 'Kansrijk: verzamel nog een paar stukken', 'Je aanvraag past binnen onze voorwaarden. Met de ontbrekende stukken ontvang je binnen één werkdag een indicatief voorstel (term sheet).' + hr + bk];
   }
   $('toResult').addEventListener('click', function () {
     var r = upd(); lastResult = r; var t = outcome(r), c = COL[t[0]], bx = $('oBox');
@@ -335,18 +338,30 @@
     $('dAfl').textContent = eur(r.a.perJaar);
     $('dBorg').textContent = S.aanvrager === 'bv' ? eur(r.borg) + (r.l <= R.borgLowLtv ? ' (' + pctL(R.borgLowPct) + ')' : ' (100%)') : 'n.v.t.';
     $('dFee').textContent = eur(r.fee); $('dBeh').textContent = eur(r.mgmt);
-    $('dVerg').textContent = pc(r.v.p) + ' · ' + eur(r.v.eur);
-    $('dVergL').innerHTML = r.v.c.map(function (x) { return '<li class="' + (x[1] ? 'y' : '') + '">' + x[0] + ' (0,50%)</li>'; }).join('');
+    var op = options(r); $('optsBox').hidden = !op.length; $('dOpts').innerHTML = op.map(function (x) { return '<li>' + x + '</li>'; }).join('');
     $('dMiss').innerHTML = r.miss.length ? r.miss.map(function (m) { return '<li>' + m[1] + '</li>'; }).join('') : '<li class="y" style="color:#067647">Niets: je hebt alle stukken al. Je levert ze aan na het indienen.</li>';
     $('dNote').textContent = S.eig === 'erfpacht' ? 'Erfpacht: de einddatum moet minimaal 10 jaar na het einde van de financiering liggen.' : '';
     $('meetLink').href = CONFIG.meetingUrl;
     $('wi').value = 0; wiUpd();
   }
+  /* routes for a request that does not fit as entered */
+  function options(r) {
+    var o = [];
+    if (r.b > R.max) o.push('Boven ' + eur(R.max) + ' financieren we niet via het platform. Bespreek met een accountmanager welk deel wel kan.');
+    else if (r.b < R.min) o.push('We financieren vanaf ' + eur(R.min) + '. Leen je net minder? Bespreek het met een accountmanager.');
+    if (r.l > R.ltvMax && r.b <= R.max) {
+      o.push('<b>Leen maximaal ' + eur(r.maxF) + '.</b> Dan blijf je binnen ' + pctL(R.ltvMax) + ' van de waarde van je pand.');
+      o.push('<b>Breng ' + eur(r.b - r.maxF) + ' extra eigen geld in</b> en leen de rest bij ons.');
+      o.push('<b>Is je pand meer waard dan je denkt?</b> Een recente taxatie kan je ruimte vergroten. Kijk hieronder wat een andere taxatie doet.');
+      o.push('<b>Heb je nog een pand?</b> Bespreek met een accountmanager of je dat kunt inbrengen als extra onderpand.');
+    }
+    return o;
+  }
   function wiUpd() {
     var v = +$('wi').value; fill($('wi')); $('wiOut').textContent = (v > 0 ? '+' : '') + v + '%';
     var r = calc(v);
     $('wiRes').innerHTML = 'Taxatie ' + eur(r.w) + ' → LTV <b>' + (r.l * 100).toFixed(1).replace('.', ',') + '%</b>, aflossing ' + (r.a.perJaar ? eur(r.a.perJaar) + ' per jaar' : 'niet verplicht') + '. ' +
-      (r.l <= R.ltvMax ? '<span style="color:#067647">Binnen de grens.</span>' : '<span style="color:#b54708">Boven ' + pctL(R.ltvMax) + ': verlaag naar ' + eur(r.maxF) + ' of verhoog de eigen inbreng met ' + eur(r.b - r.maxF) + '.</span>');
+      (r.l <= R.ltvMax ? '<span style="color:#067647">Binnen de grens.</span>' : '<span style="color:#b54708">Boven ' + pctL(R.ltvMax) + ': leen maximaal ' + eur(r.maxF) + ' of breng ' + eur(r.b - r.maxF) + ' extra eigen geld in.</span>');
   }
   $('wi').addEventListener('input', wiUpd);
 
@@ -377,7 +392,7 @@
     var local = email.split('@')[0], domain = email.split('@')[1], label = domain.split('.').slice(-2, -1)[0] || '';
     if (CONFIG.blockFreeMail && (FREE.indexOf(domain) > -1 || CONFIG.extraBlocked.indexOf(domain) > -1)) return Promise.resolve('Gebruik je zakelijke e-mailadres. Gmail, Hotmail, Ziggo en vergelijkbare adressen accepteren we niet.');
     if (DISPOSABLE.test(domain)) return Promise.resolve('Tijdelijke e-mailadressen accepteren we niet.');
-    if (JUNK.test(label) || JUNK.test(local) || /^(.{2,5})\1+$/.test(label) || (label.length >= 5 && !/[aeiouy]/.test(label))) return Promise.resolve('Dit lijkt geen echt e-mailadres. Gebruik je zakelijke e-mailadres.');
+    if (JUNK.test(label) || JUNK.test(local) || /^(.{2,5})\1+$/.test(label) || (label.length >= 5 && !/[aeiouy]/.test(label))) return Promise.resolve('Dit lijkt geen echt e-mailadres. Controleer je e-mailadres.');
     return domainAccepts(domain).then(function (ok) { return ok ? '' : 'Het domein ' + domain + ' kan geen e-mail ontvangen. Controleer je e-mailadres.'; });
   }
 
@@ -396,7 +411,7 @@
   function caseFields(r) {
     var C = CONFIG.objects.contact;
     var f = [
-      F('contact_type', 'Intermediair'), // API submissions do not apply a form's hidden default, so the tool sends it
+      F('contact_type', 'Debtor'), // API submissions do not apply a form's hidden default, so the tool sends it
       F('bw_business_unit', '_briqwise b.v.'),
       F('doel_financiering', HS_DOEL[S.doel]),
       F('type_bestemming', HS_TYPE[S.type]),
@@ -413,7 +428,6 @@
       F('dc_max_financing', Math.round(r.maxF)), F('dc_annual_repayment', Math.round(r.a.perJaar)),
       F('dc_guarantee_amount', Math.round(r.borg)), F('dc_financing_fee', Math.round(r.fee)),
       F('dc_rate_surcharge', r.ops), F('dc_monthly_low', Math.round(monthly(r, r.rLo))), F('dc_monthly_high', Math.round(monthly(r, r.rHi))),
-      F('dc_intermediary_fee_pct', r.v.p), F('dc_intermediary_fee_amount', Math.round(r.v.eur)),
       F('dc_report_summary', summary(r))
     ];
     TRACK_KEYS.forEach(function (k) { var v = ss('dc_' + k); if (v) f.push(F(k, v)); });
@@ -426,7 +440,7 @@
       LBL.doel[S.doel] + ' | ' + LBL.type[S.type] + ' | ' + LBL.gebruik[S.gebruik] + ' | ' + LBL.aanvrager[S.aanvrager] + ' | ' + (S.eig === 'vol' ? 'Volle eigendom' : S.eig === 'erfpacht' ? 'Erfpacht' : 'Opstal'),
       'Max. financiering ' + eur(r.maxF) + ' | Aflossing ' + eur(r.a.perJaar) + ' p/j | Indicatie maandlast ' + eur(monthly(r, r.rLo)) + ' - ' + eur(monthly(r, r.rHi)),
       'Borgstelling ' + (S.aanvrager === 'bv' ? eur(r.borg) : 'n.v.t.') + ' | Financieringsfee ' + eur(r.fee) + ' | Beheer ' + eur(r.mgmt) + ' p/j | Rente indicatief ' + pc(r.rLo) + ' - ' + pc(r.rHi),
-      (FEE_ON ? 'Vergoeding intermediair ' + pc(r.v.p) + ' (' + eur(r.v.eur) + ') | ' : '') + 'Dossier ' + r.pct + '% compleet | Ontbreekt: ' + (r.miss.map(function (d) { return d[1]; }).join(', ') || 'niets'),
+      'Stukken ' + r.pct + '% compleet | Ontbreekt: ' + (r.miss.map(function (d) { return d[1]; }).join(', ') || 'niets'),
       'Bijzonderheden: ' + (BIJZ.filter(function (x) { return bz[x[0]]; }).map(function (x) { return x[1]; }).join(', ') || 'geen') + ' | Bank afgewezen: ' + S.bank + ' | Urgentie: ' + URG[+$('urg').value]
     ].join('\n');
   }
@@ -436,7 +450,7 @@
     var body = { fields: fields, context: { pageUri: location.href, pageName: document.title } };
     var hutk = cookie('hubspotutk'); if (hutk) body.context.hutk = hutk;
     if (CONFIG.dryRun || /REPLACE/.test(guid)) {
-      if (window.console) console.info('[dossier-check] dry run', formKey, body);
+      if (window.console) console.info('[financieringscheck] dry run', formKey, body);
       return new Promise(function (res) { setTimeout(function () { res({ ok: true }); }, 600); });
     }
     return fetch(CONFIG.endpoint + CONFIG.portalId + '/' + guid, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -444,8 +458,8 @@
         return res.json().catch(function () { return {}; }).then(function (j) {
           if (res.ok) return { ok: true };
           var types = (j.errors || []).map(function (e) { return e.errorType; });
-          if (window.console) console.warn('[dossier-check] HubSpot error', res.status, j);
-          if (types.indexOf('BLOCKED_EMAIL') > -1 || types.indexOf('INVALID_EMAIL') > -1 || types.indexOf('INVALID_DOMAIN') > -1) return { ok: false, msg: 'Dit e-mailadres accepteren we niet. Gebruik je zakelijke e-mailadres.' };
+          if (window.console) console.warn('[financieringscheck] HubSpot error', res.status, j);
+          if (types.indexOf('BLOCKED_EMAIL') > -1 || types.indexOf('INVALID_EMAIL') > -1 || types.indexOf('INVALID_DOMAIN') > -1) return { ok: false, msg: 'Dit e-mailadres accepteren we niet. Controleer je e-mailadres.' };
           return { ok: false, msg: 'Versturen lukte niet. Probeer het opnieuw of bel ons op ' + CONFIG.phone + '.' };
         });
       })
@@ -458,7 +472,6 @@
     var ext = Array.prototype.slice.call(document.querySelectorAll('form[data-dc-form="' + key + '"]')).filter(function (f) { return !root.contains(f); })[0];
     if (ext && slot) {
       var wrap = ext.closest('.w-form') || ext; slot.innerHTML = ''; slot.appendChild(wrap);
-      if (key === 'report' && !ext.querySelector('[name="intermediair_type"]')) ext.insertAdjacentHTML('beforeend', '<input type="hidden" name="intermediair_type">');
       if (!ext.querySelector('[data-dc-err]')) ext.insertAdjacentHTML('beforeend', '<p class="dc-err" data-dc-err></p>');
       return ext;
     }
@@ -474,7 +487,8 @@
   var reportSent = false;
   if (forms.report) {
     var em = forms.report.querySelector('[name="email"]');
-    if (em) em.addEventListener('blur', function () { if (!em.value) return; validateEmail(em.value).then(function (m) { em.classList.toggle('bad', !!m); setErr('report', m); }); });
+    /* the blur check only clears its own message, never another field's error */
+    if (em) em.addEventListener('blur', function () { if (!em.value) return; validateEmail(em.value).then(function (m) { em.classList.toggle('bad', !!m); if (m) setErr('report', m); else if (em.dataset.err) setErr('report', ''); em.dataset.err = m ? '1' : ''; }); });
     if (em) em.addEventListener('input', function () { em.classList.remove('bad'); setErr('report', ''); });
     forms.report.addEventListener('submit', function (e) {
       e.preventDefault(); e.stopImmediatePropagation();
@@ -482,18 +496,13 @@
       if (!val(f, 'firstname')) return setErr('report', 'Vul je voornaam in.');
       if (f.querySelector('[name="lastname"]') && !val(f, 'lastname')) return setErr('report', 'Vul je achternaam in.');
       if (val(f, 'phone') && val(f, 'phone').replace(/\D/g, '').length < 10) return setErr('report', 'Vul een geldig telefoonnummer in, of laat het veld leeg.');
-      if (f.querySelector('[name="company"]') && !val(f, 'company')) return setErr('report', 'Vul de naam van je kantoor in.');
-      var zip4 = (val(f, 'zip').match(/^(\d{4})\s*([a-zA-Z]{2})?$/) || [])[1];
-      if (f.querySelector('[name="zip"]') && !zip4) return setErr('report', 'Vul de postcode van je kantoor in, bijvoorbeeld 7571.');
-      var tint = val(f, 'intermediair_type') || S.tint;
-      if (!tint) return setErr('report', 'Kies wat voor kantoor je bent.');
       busy(f, true);
       validateEmail(val(f, 'email')).then(function (m) {
         if (m) { busy(f, false); if (em) em.classList.add('bad'); return setErr('report', m); }
         if (isBot(f)) { busy(f, false); return showReport(r); }
-        var fields = [F('firstname', val(f, 'firstname')), F('lastname', val(f, 'lastname')), F('email', val(f, 'email').toLowerCase()), F('phone', val(f, 'phone')), F('company', val(f, 'company')), F('zip', zip4), F('intermediair_type', tint),
-          /* the kantoor as Company: the owner routing works on the company's postal code */
-          F('name', val(f, 'company'), CONFIG.objects.company), F('zip', zip4, CONFIG.objects.company)];
+        var fields = [F('firstname', val(f, 'firstname')), F('lastname', val(f, 'lastname')), F('email', val(f, 'email').toLowerCase()), F('phone', val(f, 'phone')), F('company', val(f, 'company'))];
+        /* the business as Company, only when a name was given */
+        if (val(f, 'company')) fields.push(F('name', val(f, 'company'), CONFIG.objects.company));
         if (val(f, 'marketing_consent')) fields.push(F('marketing_consent', 'true'));
         return hsSubmit('report', fields.concat(caseFields(r))).then(function (res) {
           busy(f, false);
@@ -501,7 +510,7 @@
           ss('dc_email', val(f, 'email').toLowerCase());
           var ph = forms.caseSubmit && forms.caseSubmit.querySelector('[name="phone"]'); if (ph && !ph.value) ph.value = val(f, 'phone');
           if (ph && ph.value && $('phKnown')) { $('phVal').textContent = ph.value; $('phKnown').hidden = false; $('phWrap').hidden = true; }
-          track('generate_lead', { dc_form: 'report', dc_outcome: r.o, dc_intermediair_type: tint });
+          track('generate_lead', { dc_form: 'report', dc_outcome: r.o, dc_prefilled: PRE_ON ? 1 : 0 });
           showReport(r);
         });
       });
@@ -550,10 +559,9 @@
       e.preventDefault(); e.stopImmediatePropagation();
       var f = forms.caseSubmit, r = lastResult || calc(), L = CONFIG.objects.loan, K = CONFIG.objects.collateral;
       var pcode = val(f, 'postcode_vastgoed').toUpperCase().replace(/\s+/g, '');
-      if (!val(f, 'address')) return setErr('caseSubmit', 'Vul het adres van het onderpand in.');
+      if (!val(f, 'address')) return setErr('caseSubmit', 'Vul het adres van je pand in.');
       if (!/^\d{4}[A-Z]{2}$/.test(pcode)) return setErr('caseSubmit', 'Vul een geldige postcode in, bijvoorbeeld 1234AB.');
       if (val(f, 'phone').replace(/\D/g, '').length < 10) return setErr('caseSubmit', 'Vul een geldig telefoonnummer in.');
-      if (!val(f, 'dc_client_consent')) return setErr('caseSubmit', 'Bevestig dat je klant akkoord is met het delen van de gegevens.');
       var email = ss('dc_email') || val(forms.report, 'email').toLowerCase();
       if (!email) return setErr('caseSubmit', 'Vraag eerst je rapport aan.');
       setErr('caseSubmit', ''); busy(f, true);
@@ -562,7 +570,7 @@
       var full = street ? (street + ' ' + nr + add + (city ? ', ' + city : '')) : val(f, 'address');
       var fields = [
         F('email', email), F('phone', val(f, 'phone')),
-        F('dc_notes', val(f, 'dc_notes')), F('dc_client_consent', 'true'),
+        F('dc_notes', val(f, 'dc_notes')),
         F('appraisal_value', Math.round(r.w)), F('desired_loan_amount', r.b), F('ltv', (r.l * 100).toFixed(2)),
         F('dc_case_submitted', 'true'),
         F('straatnaam_vastgoed', street), F('huisnummer_vastgoed', nr), F('huisnummer_toevoeging_los', add),
@@ -616,6 +624,8 @@
     var i = $('phWrap').querySelector('input'); i.focus(); i.select();
   });
 
+  var PRE_ON = !!(PRE.waarde || PRE.bedrag || PRE.looptijd || PRE.doel || PRE.type);
+
   /* ================= rule-driven UI ================= */
   (function applyRules() {
     var b = $('bedrag'); b.min = R.min; b.max = R.max; b.value = Math.min(R.max, Math.max(R.min, +b.value));
@@ -623,17 +633,18 @@
     $('minL').textContent = eur(R.min); $('maxL').textContent = 'max. ' + eur(R.max);
     $('tickMax').style.left = $('tickMaxL').style.left = (R.ltvMax * 100) + '%'; $('tickMaxL').textContent = 'max ' + pctL(R.ltvMax);
     $('tickFree').style.left = $('tickFreeL').style.left = (R.ltvFree * 100) + '%'; $('tickFreeL').textContent = pctL(R.ltvFree);
-    if (!FEE_ON) {
-      $('vergLive').hidden = true; $('vergBox').hidden = true;
-      $('vergTeaser').querySelector('.k').textContent = 'Aflossing per jaar';
-    }
+    /* prefill: clamp to the sliders; the term snaps to the nearest option */
+    if (PRE.waarde) { var wv = $('waarde'); wv.value = Math.min(+wv.max, Math.max(+wv.min, PRE.waarde)); }
+    if (PRE.bedrag) b.value = Math.min(R.max, Math.max(R.min, PRE.bedrag));
+    if (PRE.looptijd) { var bi = 0; R.terms.forEach(function (t, i) { if (Math.abs(t - PRE.looptijd) < Math.abs(R.terms[bi] - PRE.looptijd)) bi = i; }); lt.value = bi; }
+    if (PRE_ON) { var pf = $('prefill'); pf.innerHTML = svg('ok') + '<span>We hebben je gegevens van eerder alvast ingevuld. Klopt het nog? Pas aan wat veranderd is.</span>'; pf.hidden = false; }
     root.setAttribute('data-dc-rules', remoteRules ? 'remote' : 'built-in');
   })();
 
   /* ================= init ================= */
   renderDocs(); renderBijz(); upd(); go(1);
   steps[0].hidden = false;
-  track('view');
+  track('view', PRE_ON ? { dc_prefilled: 1 } : {});
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();

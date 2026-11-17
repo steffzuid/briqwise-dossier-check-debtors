@@ -1,4 +1,4 @@
-// Builds dist/dossier-check.js and dist/dossier-check.min.js from src/ and rules.json.
+// Builds dist/financieringscheck.js and dist/financieringscheck.min.js from src/ and rules.json.
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { transformSync } from 'esbuild';
 
@@ -19,10 +19,10 @@ const swap = (marker, value) => {
 swap("/*__RULES__*/null", JSON.stringify(rules));
 swap("/*__CSS__*/''", JSON.stringify(css));
 swap("/*__HTML__*/''", JSON.stringify(inner));
-js = js.replace('/*! Briqwise dossier-check |', `/*! Briqwise dossier-check v${pkg.version} |`);
+js = js.replace('/*! Briqwise financieringscheck |', `/*! Briqwise financieringscheck v${pkg.version} |`);
 
 mkdirSync('dist', { recursive: true });
-writeFileSync('dist/dossier-check.js', js);
+writeFileSync('dist/financieringscheck.js', js);
 const min = transformSync(js, { minify: true, legalComments: 'inline', target: 'es2015' }).code;
-writeFileSync('dist/dossier-check.min.js', min);
-console.log(`v${pkg.version}: dossier-check.js ${js.length.toLocaleString()} chars, min ${min.length.toLocaleString()} chars`);
+writeFileSync('dist/financieringscheck.min.js', min);
+console.log(`v${pkg.version}: financieringscheck.js ${js.length.toLocaleString()} chars, min ${min.length.toLocaleString()} chars`);

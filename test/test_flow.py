@@ -11,10 +11,11 @@ def page_with(rules_url, name):
 url = page_with("../rules.json", "main")
 alt = (root / "test" / "_rules_alt.json")
 import json
-rj = json.loads((root / "rules.json").read_text()); rj["loan"]["ltvMax"] = 0.7; rj["intermediaryFee"]["enabled"] = False
+rj = json.loads((root / "rules.json").read_text()); rj["loan"]["ltvMax"] = 0.7
 alt.write_text(json.dumps(rj))
 url_alt = page_with("_rules_alt.json", "alt")
 url_404 = page_with("does-not-exist.json", "missing")
+url_pre = page_with("../rules.json", "prefill") + "?waarde=800000&bedrag=500000&looptijd=110&doel=herfin&type=winkel"
 server = subprocess.Popen([sys.executable, "-m", "http.server", "8765", "--bind", "127.0.0.1"], cwd=root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 time.sleep(0.8)
 shots = root / "test" / "shots"; shots.mkdir(exist_ok=True)
@@ -37,7 +38,7 @@ with sync_playwright() as p:
         page.on("pageerror", lambda e: errs.append(str(e)))
         sent = {}
         def on_console(m):
-            if "[dossier-check] dry run" in m.text and len(m.args) >= 3:
+            if "[financieringscheck] dry run" in m.text and len(m.args) >= 3:
                 sent[m.args[1].json_value()] = {(x["objectTypeId"], x["name"]): x["value"] for x in m.args[2].json_value()["fields"]}
         page.on("console", on_console)
         page.route("https://dns.google/**", lambda r: r.fulfill(status=200, content_type="application/json",
@@ -76,7 +77,7 @@ with sync_playwright() as p:
         page.go_forward(); page.wait_for_timeout(150)
         check(page.is_visible('section[data-step="2"]'), f"{name}: browser forward returns to step 2")
         page.click('[data-dc="stepper"] li[data-sn="1"] button')
-        check(page.is_visible('section[data-step="1"]') and txt(page, "stepTitle") == "Heeft deze aanvraag kans?", f"{name}: stepper jumps back to step 1")
+        check(page.is_visible('section[data-step="1"]') and txt(page, "stepTitle") == "Kun je financieren op je pand?", f"{name}: stepper jumps back to step 1")
         page.click('[data-go="2"]')
         page.screenshot(path=str(shots / f"{name}-2.png"), full_page=True)
         page.click('section[data-step="2"] [data-go="3"]')
@@ -92,39 +93,35 @@ with sync_playwright() as p:
         page.wait_for_timeout(4000)  # bot timer
         f = 'form[data-dc-form="report"]'
         page.fill(f + ' [name="firstname"]', "Sanne")
-        page.fill(f + ' [name="email"]', "sanne@vandijkadvies.nl"); page.click('[data-g="tint"] [data-v="makelaar"]')
+        page.fill(f + ' [name="email"]', "sanne@devriesvastgoed.nl")
         page.click(f + ' [type="submit"]'); page.wait_for_timeout(250)
         check("achternaam" in page.inner_text(f + ' [data-dc-err]'), f"{name}: lastname required")
         page.fill(f + ' [name="lastname"]', "de Vries"); page.fill(f + ' [name="phone"]', "06 1234 5678")
-        page.click(f + ' [type="submit"]'); page.wait_for_timeout(250)
-        check("naam van je kantoor" in page.inner_text(f + ' [data-dc-err]'), f"{name}: office name required")
-        page.fill(f + ' [name="company"]', "Van Dijk Advies")
-        page.click(f + ' [type="submit"]'); page.wait_for_timeout(250)
-        check("postcode" in page.inner_text(f + ' [data-dc-err]'), f"{name}: office postcode required")
-        page.fill(f + ' [name="zip"]', "7571 EE")
+        check(page.query_selector(f + ' [name="zip"]') is None and page.query_selector('[data-g="tint"]') is None, f"{name}: no office postcode or office type fields")
+        page.fill(f + ' [name="company"]', "De Vries Vastgoed BV")
         def submit_with(email):
             page.fill(f + ' [name="email"]', email)
             page.click(f + ' [type="submit"]'); page.wait_for_timeout(250)
             return page.inner_text(f + ' [data-dc-err]').strip()
-        page.click('[data-g="tint"] [data-v="makelaar"]')
-        check("zakelijke" in submit_with("sanne@gmail.com"), f"{name}: gmail blocked")
-        check("zakelijke" in submit_with("sanne@ziggo.nl"), f"{name}: ziggo blocked")
         check("echt" in submit_with("asadsad@asdasd.nl"), f"{name}: asdasd.nl blocked")
         check("Tijdelijke" in submit_with("x@mailinator.com"), f"{name}: disposable blocked")
         check("kan geen e-mail" in submit_with("sanne@nietbestaand-kantoor.nl"), f"{name}: NXDOMAIN blocked")
         check("geldig" in submit_with("sanne@kantoor"), f"{name}: syntax blocked")
-        submit_with("sanne@vandijkadvies.nl"); page.wait_for_timeout(900)
-        check(page.is_visible('[data-dc="detail"]'), f"{name}: report shown after valid business e-mail")
+        submit_with("sanne.devries@gmail.com"); page.wait_for_timeout(900)
+        check(page.is_visible('[data-dc="detail"]'), f"{name}: report shown after Gmail address (free mail allowed)")
+        check(page.is_hidden('[data-dc="optsBox"]'), f"{name}: no options box when the request fits")
         check(txt(page, "cLeen") == "€ 300.000", f"{name}: case summary leensom ({txt(page,'cLeen')})")
         check(txt(page, "dAfl") == "€ 5.000", f"{name}: report aflossing ({txt(page,'dAfl')})")
         check(txt(page, "dBorg").startswith("€ 300.000"), f"{name}: borg 100% at LTV 60% ({txt(page,'dBorg')})")
         check(txt(page, "dFee") == "€ 8.850", f"{name}: fee 2,95% ({txt(page,'dFee')})")
         page.screenshot(path=str(shots / f"{name}-5-report.png"), full_page=True)
         rp = sent.get("report", {})
-        for k, v in [("lastname", "de Vries"), ("phone", "06 1234 5678"), ("contact_type", "Intermediair"), ("intermediair_type", "Makelaar"), ("dc_term_months", "60"), ("zip", "7571"), ("company", "Van Dijk Advies")]:
+        for k, v in [("lastname", "de Vries"), ("phone", "06 1234 5678"), ("contact_type", "Debtor"), ("dc_term_months", "60"), ("company", "De Vries Vastgoed BV"), ("email", "sanne.devries@gmail.com")]:
             check(rp.get(("0-1", k), "").lower() == v.lower(), f"{name}: report sends {k}={rp.get(('0-1', k))}")
         check("Borgstelling" in rp.get(("0-1", "dc_report_summary"), ""), f"{name}: summary has borgstelling line")
-        check(rp.get(("0-2", "name")) == "Van Dijk Advies" and rp.get(("0-2", "zip")) == "7571", f"{name}: company object gets name + zip")
+        check("intermediair" not in rp.get(("0-1", "dc_report_summary"), "").lower(), f"{name}: summary has no intermediary fee")
+        check(rp.get(("0-2", "name")) == "De Vries Vastgoed BV" and ("0-2", "zip") not in rp, f"{name}: company object gets name only")
+        check(not any("intermedia" in k[1] for k in rp) and not any(k[1] == "zip" for k in rp), f"{name}: no intermediary or zip fields sent")
         check(not any(k[1] == "dc_borrower_name" for k in rp), f"{name}: no dc_borrower_name")
 
         # case submit
@@ -148,14 +145,14 @@ with sync_playwright() as p:
         page.click('[data-dc="phEdit"]')
         check(page.is_visible('[data-dc="phWrap"]'), f"{name}: phone editable via link")
         page.click(cf + ' [type="submit"]'); page.wait_for_timeout(200)
-        check("akkoord" in page.inner_text(cf + ' [data-dc-err]'), f"{name}: consent required")
-        page.check(cf + ' [name="dc_client_consent"]'); page.click(cf + ' [type="submit"]'); page.wait_for_timeout(900)
+        check(page.query_selector(cf + ' [name="dc_client_consent"]') is None, f"{name}: no client consent checkbox")
+        page.wait_for_timeout(900)
         check(page.is_visible('[data-dc="caseDone"]'), f"{name}: case confirmation shown")
         cs = sent.get("caseSubmit", {}); L, K = "2-138893726", "2-139157927"
         for key, v in [((K, "collateral_financing_type"), "purchase"), ((K, "collateral_usage"), "commercial"), ((K, "collateral_country_code"), "nl"),
                        ((L, "loan_status"), "new"), ((L, "loan_duration_imp"), "60"), ((L, "loan_country"), "nl"), ((L, "loan_amount"), "300000"),
-                       (("0-1", "appraisal_value"), "500000"), (("0-1", "desired_loan_amount"), "300000"), (("0-1", "contact_type"), "Intermediair"),
-                       (("0-1", "email"), "sanne@vandijkadvies.nl"), (("0-1", "ltv"), "60.00")]:
+                       (("0-1", "appraisal_value"), "500000"), (("0-1", "desired_loan_amount"), "300000"), (("0-1", "contact_type"), "Debtor"),
+                       (("0-1", "email"), "sanne.devries@gmail.com"), (("0-1", "ltv"), "60.00")]:
             check(cs.get(key) == v, f"{name}: case sends {key[1]}={cs.get(key)}")
         check(("0-1", "address") not in cs and len(cs) > 0, f"{name}: address not sent")
         page.screenshot(path=str(shots / f"{name}-6-case.png"), full_page=True)
@@ -179,6 +176,23 @@ with sync_playwright() as p:
         page.goto(url); page.wait_for_timeout(200)
         setrange(page, "waarde", 1000000); setrange(page, "bedrag", 800000)
         check(txt(page, "stat") == "Maatwerk", f"{name}: LTV 80% -> maatwerk")
+        page.click('[data-go="2"]'); page.click('section[data-step="2"] [data-go="3"]'); page.click('[data-dc="toResult"]')
+        check("Maatwerk" in txt(page, "oTitle") and "80%" not in txt(page, "oTitle"), f"{name}: maatwerk outcome title ({txt(page,'oTitle')})")
+        page.wait_for_timeout(4000)
+        page.fill(f + ' [name="firstname"]', "Jan"); page.fill(f + ' [name="lastname"]', "Bakker"); page.fill(f + ' [name="email"]', "jan@bakkerbouw.nl")
+        page.click(f + ' [type="submit"]'); page.wait_for_timeout(900)
+        check(page.is_visible('[data-dc="optsBox"]'), f"{name}: options box shown at LTV 80%")
+        check("€ 750.000" in txt(page, "dOpts") and "€ 50.000" in txt(page, "dOpts"), f"{name}: options give max loan 750k and 50k own funds ({txt(page,'dOpts')[:80]})")
+        page.screenshot(path=str(shots / f"{name}-8-options.png"), full_page=True)
+        # prefill from URL
+        page.goto(url_pre); page.wait_for_timeout(300)
+        check(page.is_visible('[data-dc="prefill"]') and "alvast ingevuld" in txt(page, "prefill"), f"{name}: prefill note shown")
+        check(txt(page, "wOut") == "€ 800.000" and txt(page, "bOut") == "€ 500.000", f"{name}: prefill value/amount ({txt(page,'wOut')} / {txt(page,'bOut')})")
+        check("on" in page.get_attribute('[data-g="doel"] [data-v="herfin"]', "class") and "on" in page.get_attribute('[data-g="type"] [data-v="winkel"]', "class"), f"{name}: prefill doel + type")
+        check(txt(page, "lOut") == "10 jaar", f"{name}: looptijd 110 snaps to 10 jaar ({txt(page,'lOut')})")
+        page.screenshot(path=str(shots / f"{name}-0-prefill.png"), full_page=True)
+        page.goto(url); page.wait_for_timeout(200)
+        check(page.is_hidden('[data-dc="prefill"]'), f"{name}: no prefill note without parameters")
         check(not errs, f"{name}: no JS errors {errs}")
         page.close()
     pg = b.new_page()
@@ -186,7 +200,6 @@ with sync_playwright() as p:
     check(pg.get_attribute("[data-dc-root]", "data-dc-rules") == "remote", "rules.json loaded from URL")
     pg.goto(url_alt); pg.wait_for_timeout(500)
     check(pg.inner_text('[data-dc="tickMaxL"]') == "max 70%", "alt rules: LTV max label follows rules.json")
-    check(pg.is_hidden('[data-dc="vergLive"]'), "alt rules: intermediary fee hidden when disabled")
     setrange(pg, "waarde", 1000000); setrange(pg, "bedrag", 725000)
     check(pg.inner_text('[data-dc="stat"]') == "Maatwerk", "alt rules: 72,5% LTV -> maatwerk under 70% cap")
     pg.goto(url_404); pg.wait_for_timeout(600)
