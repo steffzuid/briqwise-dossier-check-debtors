@@ -75,7 +75,7 @@ The `generate_lead` and `view` dataLayer events carry `dc_prefilled: 1` when the
 
 | Key | Meaning |
 | --- | --- |
-| `hubspot.forms.report` / `caseSubmit` | Form GUIDs. While a GUID contains `REPLACE`, nothing is sent (dry run). **Still REPLACE: run the setup script first.** |
+| `hubspot.forms.report` / `caseSubmit` | Form GUIDs of "Financieringscheck \| Rapport" (`d9338ba5-…`) and "\| Aanvraag indienen" (`1829b129-…`). While a GUID contains `REPLACE`, nothing is sent (dry run). |
 | `hubspot.loanDurationUnit` | `months` or `years`: unit of `loan_duration_imp` on the Loan. |
 | `ui.gateOutcome` | `true` hides the outcome behind the e-mail form as well. |
 | `ui.meetingModalMinWidth` | From this screen width (768px) "Plan een call" opens the meeting page in the tool's own pop-up; below it, it opens the page itself. |
@@ -100,9 +100,18 @@ Private app scopes: `crm.schemas.contacts.read`, `crm.schemas.contacts.write`, `
 
 Both tools write the same `dc_*` properties. Filter on `contact_type` (or the form) to separate brokers from ondernemers in reports and workflows.
 
-### Workflows
+### Forms, e-mails and workflows (created 18 Nov 2026)
 
-Not scripted yet. The broker workflow script (postcode routing to accountmanagers, e-mails 01–03) does not apply to ondernemers. Build the debtor follow-up in HubSpot: owner assignment, the report e-mail by outcome, and the "aanvraag ontvangen" e-mail. Exclude contacts in the reactivation flow from double follow-up.
+| What | HubSpot |
+| --- | --- |
+| Form "Financieringscheck \| Rapport" | `d9338ba5-0c0f-4d65-9689-2079b969948e` |
+| Form "Financieringscheck \| Aanvraag indienen" | `1829b129-48e9-4939-b41c-584645933f02` |
+| E-mail DEB-FC-01-RAPPORT-NL (from Rients) | content id `517781752020` |
+| E-mail DEB-FC-02-AANVRAAG-ONTVANGEN-NL (from Rients) | content id `517781752023` |
+| Workflow "Financieringscheck \| Rapport → Rients + e-mail" | `5388617957` |
+| Workflow "Financieringscheck \| Aanvraag ingediend → Rients + e-mail" | `5388617958` |
+
+Both workflows: form submission (re-enrolment on) → wait 1 minute → no owner? set owner Rients Teernstra → send the e-mail. Contacts that already have an owner keep it; the e-mail always comes from Rients (fixed sender, signature and meeting link, no owner tokens). Publish both e-mails before switching the workflows on.
 
 ## Changing code
 

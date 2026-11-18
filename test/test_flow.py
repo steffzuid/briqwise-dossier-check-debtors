@@ -135,7 +135,7 @@ with sync_playwright() as p:
             check(page.is_hidden('[data-dc-meeting]'), f"{name}: meeting pop-up closes")
         else:
             check(not shown, f"{name}: call button skips the pop-up on mobile")
-        check(page.get_attribute('[data-dc="meetLink"]', "href").startswith("https://meetings-eu1.hubspot.com/guus-oerlemans"), f"{name}: call button links to Guus' meeting page")
+        check(page.get_attribute('[data-dc="meetLink"]', "href").startswith("https://meetings-eu1.hubspot.com/rients-teernstra"), f"{name}: call button links to Rients' meeting page")
         page.click('[data-dc="openCase"]')
         cf = 'form[data-dc-form="case"]'
         page.fill(cf + ' [name="address"]', "Oudegracht 12"); page.fill(cf + ' [name="postcode_vastgoed"]', "3511 AB")
